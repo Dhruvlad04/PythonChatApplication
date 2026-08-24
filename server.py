@@ -1,139 +1,126 @@
 import socket
 import threading
 
+# Server IP address and port
 HOST = "127.0.0.1"
 PORT = 5000
 
+# List to store connected clients
 clients = []
-clients_lock = threading.Lock()
 
 
-def send_to_all(message):
-    # A client can disconnect while this loop is broadcasting.
-    with clients_lock:
-        connected_clients = clients.copy()
-
-    for client in connected_clients:
+# Send a message to all connected clients
+def send_to_clients(message):
+    for client in clients:
         try:
-            client.sendall(message.encode())
-        except OSError:
-            continue
+            client.send(message.encode())
+        except ConnectionResetError:
+            print("A client connection was closed.")
+        except OSError as error:
+            print("Socket error:", error)
 
 
-def receive_from_client(client, address):
-    # recv() blocks for this client, so every client needs its own thread.
+# Receive messages from one client
+def handle_client(client, address):
+
+    print("Client connected:", address)
+
     while True:
-
         try:
-            message = client.recv(1024).decode()
+            # Receive data from the client
+            data = client.recv(1024)
 
-            if not message:
+            if not data:
+                print("Client disconnected:", address)
                 break
 
-            print("\nClient:", message)
-            print("Server: ", end="", flush=True)
+            message = data.decode()
 
-            # Send client message to other clients
-            with clients_lock:
-                connected_clients = clients.copy()
+            if message == "exit":
+                print("Client left:", address)
+                break
 
-            for other_client in connected_clients:
+            print("Client:", message)
+
+            # Send the message to other connected clients
+            for other_client in clients:
                 if other_client != client:
                     try:
-                        other_client.sendall(
+                        other_client.send(
                             ("Client: " + message).encode()
                         )
-                    except OSError:
-                        continue
+                    except ConnectionResetError:
+                        print("Could not send to a client.")
+                    except OSError as error:
+                        print("Socket error:", error)
 
-        except OSError:
+        except ConnectionResetError:
+            print("Connection was closed by the client.")
             break
 
-    with clients_lock:
-        if client in clients:
-            clients.remove(client)
+        except OSError as error:
+            print("Socket error:", error)
+            break
+
+    if client in clients:
+        clients.remove(client)
 
     client.close()
 
-    print("\nClient disconnected:", address)
 
-
-def accept_clients():
-    # accept() blocks too, so it runs separately from the server input loop.
-    while True:
-        try:
-            client, address = server.accept()
-        except OSError:
-            break
-
-        with clients_lock:
-            clients.append(client)
-
-        print("\nClient connected:", address)
-        with clients_lock:
-            total_clients = len(clients)
-        print("Total clients:", total_clients)
-
-        thread = threading.Thread(
-            target=receive_from_client,
-            args=(client, address)
-        )
-
-        thread.daemon = True
-        thread.start()
-
-        print("Server: ", end="", flush=True)
-
-
-server = socket.socket(
+# Create a TCP socket
+server_socket = socket.socket(
     socket.AF_INET,
     socket.SOCK_STREAM
 )
 
-server.bind((HOST, PORT))
+try:
+    # Assign IP address and port to the server
+    server_socket.bind((HOST, PORT))
 
-server.listen(5)
+    # Start listening for clients
+    server_socket.listen(5)
 
-print("==============================")
-print("      PYTHON CHAT SERVER")
-print("==============================")
-print("Server started")
-print("IP:", HOST)
-print("Port:", PORT)
-print("Waiting for clients...")
-print()
+    print("================================")
+    print("       PYTHON CHAT SERVER")
+    print("================================")
+    print("Server started.")
+    print("IP:", HOST)
+    print("Port:", PORT)
+    print("Waiting for clients...")
+    print()
 
-thread = threading.Thread(
-    target=accept_clients
-)
+    # Accept clients continuously
+    while True:
 
-thread.daemon = True
-thread.start()
+        try:
+            # Accept a new client connection
+            client, address = server_socket.accept()
 
+            clients.append(client)
 
-# Server sends messages
-while True:
+            print("Client connected:", address)
+            print("Total clients:", len(clients))
 
-    message = input("Server: ")
+            # Handle this client separately
+            thread = threading.Thread(
+                target=handle_client,
+                args=(client, address)
+            )
 
-    if message == "":
-        continue
+            thread.start()
 
-    if message.lower() == "exit":
+        except OSError as error:
+            print("Could not accept client:", error)
+            break
 
-        send_to_all("SERVER: Server ended the chat.")
+except OSError as error:
+    print("Could not start server:", error)
 
-        break
+finally:
+    for client in clients:
+        client.close()
 
-    # Send server message to every client
-    send_to_all(
-        "SERVER: " + message
-    )
+    server_socket.close()
 
-
-for client in clients:
-    client.close()
-
-server.close()
-
-print("Server closed.")
+    print("Server stopped.")

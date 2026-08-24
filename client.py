@@ -3,50 +3,79 @@ import threading
 
 
 class ChatClient:
+
     def __init__(self, host, port):
-        # AF_INET selects IPv4 and SOCK_STREAM selects TCP, a reliable
-        # two-way byte stream between this client and the server.
+
+        # Create a TCP socket
         self.socket = socket.socket(
             socket.AF_INET,
             socket.SOCK_STREAM
         )
 
-        # connect() completes the client side of the TCP connection.
-        self.socket.connect((host, port))
+        try:
+            # Connect the client to the server
+            self.socket.connect((host, port))
+
+            print("Connected to server.")
+
+        except ConnectionRefusedError:
+            print("Server is not running.")
+            self.socket.close()
+            raise
+
+        except OSError as error:
+            print("Connection error:", error)
+            self.socket.close()
+            raise
 
         self.messages = []
-        # The receiver thread writes here while Tkinter reads it.
-        self.messages_lock = threading.Lock()
         self.running = True
 
     def send_message(self, message):
-        if message == "":
-            return
 
         try:
-            # sendall() handles partial sends for us.
-            self.socket.sendall(message.encode())
-        except OSError:
+            # Convert text to bytes and send it
+            self.socket.send(message.encode())
+
+        except ConnectionResetError:
+            print("Server closed the connection.")
+            self.running = False
+
+        except OSError as error:
+            print("Send error:", error)
             self.running = False
 
     def receive_messages(self):
-        # recv() blocks, so this method must run outside the GUI thread.
-        while self.running:
-            try:
-                message = self.socket.recv(1024).decode()
 
-                if not message:
+        while self.running:
+
+            try:
+                # Receive up to 1024 bytes
+                data = self.socket.recv(1024)
+
+                if not data:
+                    print("Server disconnected.")
+                    self.running = False
                     break
 
-                with self.messages_lock:
-                    self.messages.append(message)
-            except OSError:
+                # Convert bytes to text
+                message = data.decode()
+
+                self.messages.append(message)
+
+            except ConnectionResetError:
+                print("Server closed the connection.")
+                self.running = False
                 break
 
-        self.running = False
+            except OSError as error:
+                print("Receive error:", error)
+                self.running = False
+                break
 
     def start_receiving(self):
-        # A daemon thread will not keep Python alive after the GUI closes.
+
+        # Run receiving in another thread
         thread = threading.Thread(
             target=self.receive_messages
         )
@@ -55,23 +84,18 @@ class ChatClient:
         thread.start()
 
     def get_messages(self):
-        # Copy and clear together so each message is displayed only once.
-        with self.messages_lock:
-            messages = self.messages.copy()
-            self.messages.clear()
+
+        messages = self.messages.copy()
+
+        self.messages.clear()
 
         return messages
 
     def close(self):
-        # shutdown() wakes a blocking recv() before the socket is closed.
+
         self.running = False
 
         try:
-            self.socket.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-
-        try:
             self.socket.close()
-        except OSError:
-            pass
+        except OSError as error:
+            print("Error closing socket:", error)
