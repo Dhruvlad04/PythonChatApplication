@@ -8,93 +8,48 @@ HOST = "127.0.0.1"
 PORT = 5000
 
 
-# Connect to server
-try:
-
-    client = ChatClient(HOST, PORT)
-
-except ConnectionRefusedError:
-
-    print("Server is not running.")
-    print("Please run server.py first.")
-
-    exit()
-
-
-# Send message
-def send_message(message_box, chat_box):
-
-    message = message_box.get()
-
-    if message == "":
+def run_chat_window():
+    # The client opens the TCP connection before the window is created. This
+    # lets us show a useful message if server.py has not been started yet.
+    try:
+        client = ChatClient(HOST, PORT)
+    except ConnectionRefusedError:
+        print("Server is not running. Start server.py first.")
         return
 
-    client.send_message(message)
+    root = tk.Tk()
 
-    chat_box.insert(
-        tk.END,
-        "You: " + message + "\n"
-    )
+    def send_message(message_box, chat_box):
+        message = message_box.get()
+        if message == "":
+            return
 
-    message_box.delete(0, tk.END)
+        client.send_message(message)
+        chat_box.insert(tk.END, "You: " + message + "\n")
+        message_box.delete(0, tk.END)
 
+    message_box, chat_box = create_layout(root, send_message)
 
-# Check messages received from server
-def check_messages():
+    # recv() is already running in ChatClient's background thread. Tkinter
+    # must only update widgets from this main thread, so after() checks the
+    # thread-safe message queue instead of reading the socket directly.
+    def check_messages():
+        for message in client.get_messages():
+            chat_box.insert(tk.END, message + "\n")
 
-    messages = client.get_messages()
+        if client.running:
+            # Returning to the event loop keeps the window responsive.
+            root.after(100, check_messages)
 
-    for message in messages:
+    def close_window():
+        client.close()
+        root.destroy()
 
-        chat_box.insert(
-            tk.END,
-            message + "\n"
-        )
-
-    if client.running:
-
-        root.after(
-            100,
-            check_messages
-        )
-
-
-# Close window
-def close_window():
-
-    client.close()
-
-    root.destroy()
+    client.start_receiving()
+    root.after(100, check_messages)
+    root.protocol("WM_DELETE_WINDOW", close_window)
+    root.mainloop()
 
 
-# Create main window
-root = tk.Tk()
-
-
-# Create GUI
-message_box, chat_box = create_layout(
-    root,
-    send_message
-)
-
-
-# Start receiving messages
-client.start_receiving()
-
-
-# Check for new messages
-root.after(
-    100,
-    check_messages
-)
-
-
-# Close button
-root.protocol(
-    "WM_DELETE_WINDOW",
-    close_window
-)
-
-
-# Start application
-root.mainloop()
+if __name__ == "__main__":
+    run_chat_window()

@@ -5,18 +5,23 @@ HOST = "127.0.0.1"
 PORT = 5000
 
 clients = []
+clients_lock = threading.Lock()
 
 
 def send_to_all(message):
-    for client in clients:
+    # A client can disconnect while this loop is broadcasting.
+    with clients_lock:
+        connected_clients = clients.copy()
+
+    for client in connected_clients:
         try:
-            client.send(message.encode())
-        except:
-            pass
+            client.sendall(message.encode())
+        except OSError:
+            continue
 
 
 def receive_from_client(client, address):
-
+    # recv() blocks for this client, so every client needs its own thread.
     while True:
 
         try:
@@ -29,20 +34,24 @@ def receive_from_client(client, address):
             print("Server: ", end="", flush=True)
 
             # Send client message to other clients
-            for other_client in clients:
+            with clients_lock:
+                connected_clients = clients.copy()
+
+            for other_client in connected_clients:
                 if other_client != client:
                     try:
-                        other_client.send(
+                        other_client.sendall(
                             ("Client: " + message).encode()
                         )
-                    except:
-                        pass
+                    except OSError:
+                        continue
 
-        except:
+        except OSError:
             break
 
-    if client in clients:
-        clients.remove(client)
+    with clients_lock:
+        if client in clients:
+            clients.remove(client)
 
     client.close()
 
@@ -50,15 +59,20 @@ def receive_from_client(client, address):
 
 
 def accept_clients():
-
+    # accept() blocks too, so it runs separately from the server input loop.
     while True:
+        try:
+            client, address = server.accept()
+        except OSError:
+            break
 
-        client, address = server.accept()
-
-        clients.append(client)
+        with clients_lock:
+            clients.append(client)
 
         print("\nClient connected:", address)
-        print("Total clients:", len(clients))
+        with clients_lock:
+            total_clients = len(clients)
+        print("Total clients:", total_clients)
 
         thread = threading.Thread(
             target=receive_from_client,
